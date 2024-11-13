@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="./style.css" />
+    <title>Nix & NixOS lightning tutorial</title>
+  </head>
+  <body>
+    <div class="reveal">
+      <div class="slides">
+        <section>
+          <h2 class="r-fit-text"><img style="display: inline; height: 0.75em; vertical-align: sub" src="./images/nix-logo.svg" /> Nix & NixOS</h2>
+          <h2 class="r-fit-text">A <span style="color: rgb(82 119 195)">declarative</span> language, build system & OS</h2>
+        </section>
+
+        <section>
+          <section>
+            <h2 class="r-fit-text">The problem</h2>
+          </section>
+          <section>
+            <img class="r-stretch" src="./images/xkcd_installer.png" />
+          </section>
+          <section>
+            <img class="r-stretch" src="./images/xkcd_software.png" />
+          </section>
+          <section>
+            <img class="r-stretch" src="./images/arch-panik.jpg" />
+          </section>
+        </section>
+
+        <section>
+          <section>
+            <h2 class="r-fit-text">Solution?</h2>
+          </section>
+          <section>
+            <img class="r-stretch" src="./images/Docker_logo.png" />
+          </section>
+          <section>
+            <h2 class="r-fit-text">However, Docker is not declarative...</h2>
+          </section>
+          <section>
+            <pre><code data-trim data-line-numbers="1-10|1|3,4|6">
+            FROM node:latest
+
+            COPY package.json ./
+            RUN npm install
+
+            COPY --chown=node:node . .
+
+            EXPOSE 8080
+
+            CMD [ "node", "app.js" ]
+            </code><pre>
+          </section>
+        </section>
+
+        <section>
+          <section>
+            <h2 class="r-fit-text">Solution! <img style="display: inline; height: 0.75em; vertical-align: sub" src="./images/nix-logo.svg" /></h2>
+          </section>
+
+          <section>
+            <img class="r-stretch" src="./images/declarative.svg" />
+            <h2 class="r-fit-text">Declarative</h2>
+          </section>
+
+          <section>
+            <img class="r-stretch" src="./images/reproducable.svg" />
+            <h2 class="r-fit-text">Reproducible</h2>
+          </section>
+
+          <section>
+            <img class="r-stretch" src="./images/reliable.svg" />
+            <h2 class="r-fit-text">Reliable</h2>
+          </section>
+        </section>
+
+        <section>
+          <h2>In this tutorial, we shall:</h2>
+          <ul>
+            <li class="fragment">Create a package</li>
+            <li class="fragment">Create a docker container</li>
+            <li class="fragment">Create a VM</li>
+          </ul>
+        </section>
+
+        <section>
+          <section>
+            <h2 class="r-fit-text">Creating the ZINC package</h2>
+            <img class="r-stretch" src="./images/zinc_repo.png">
+            <a href="https://github.com/ZeusWPI/zinc">github.com/zeuswpi/zinc</a>
+          </section>
+          <section>
+            <pre class="r-stretch"><code data-trim data-line-numbers="1-22|1|2,22|4,5|7-11|13-16|18-21">
+  { stdenv, vlang }:
+  stdenv.mkDerivation {
+
+    pname = "zinc";
+    version = "0.0.0";
+
+    src = builtins.fetchGit {
+      url = "https://github.com/ZeusWPI/zinc.git";
+      ref = "master";
+      rev = "86dbe69c118e81baf0aa58ade5a2c0cd85cd0efa";
+    };
+
+    buildInputs = [ vlang ];
+    buildPhase = ''
+      VMODULES=/tmp v src/main.v
+    '';
+
+    installPhase = ''
+      mkdir -p $out/bin
+      cp src/main $out/bin/zinc
+    '';
+  }
+            </code></pre>
+          </section>
+          <section>
+            <img class="r-stretch" src="./images/nixpkgs-bash.webp">
+          </section>
+          <section>
+            <pre><code data-trim data-line-numbers="1-7|1,4,5,7|2|3|6">
+  let
+    nixpkgs = fetchTarball "https://github.com/NixOS/nixpkgs/tarball/nixos-24.05";
+    pkgs = import nixpkgs { config = {}; overlays = []; };
+  in
+  {
+    zinc = pkgs.callPackage ./package.nix { };
+  }
+            </code></pre>
+          </section>
+        </section>
+
+        <section>
+          <section>
+            <h2 class="r-fit-text">Creating a docker container</h2>
+          </section>
+
+          <section>
+            <pre class="r-stretch"><code data-trim data-line-numbers="1-23|2,3|5|7-18|8-9|10-14|15-17|1,4,5,12,23|20-22">
+let
+  nixpkgs = fetchTarball "https://github.com/NixOS/nixpkgs/tarball/nixos-24.05";
+  pkgs = import nixpkgs { config = {}; overlays = []; };
+in rec {
+  zinc = pkgs.callPackage ../01-package/package.nix { };
+
+  zinc-image = pkgs.dockerTools.buildImage {
+    name = "zinc";
+    tag = "latest";
+    copyToRoot = pkgs.buildEnv {
+      name = "image-root";
+      paths = [ zinc ];
+      pathsToLink = [ "/bin" ];
+    };
+    config = {
+      Cmd = [ "/bin/zinc" ];
+    };
+  };
+
+  load-image = pkgs.writeShellScriptBin "load-image" ''
+    docker load &lt; ${zinc-image}
+  '';
+}
+            </code></pre>
+          </section>
+        </section>
+
+        <section>
+          <section>
+            <h2 class="r-fit-text">Spinning up a VM</h2>
+          </section>
+
+          <section>
+            <pre class="r-stretch"><code data-trim data-line-numbers="1-26|1|3-7|3|4|5|6|7|9-20|9|10|12-15|16-19|22|24-34|25,26|27,28,32,33|29-31">
+{ lib, pkgs, ... }: {
+
+  services.sshd.enable = true;
+  system.stateVersion = lib.version;
+  users.users.root.password = "nixos";
+  services.openssh.settings.PermitRootLogin = lib.mkOverride 999 "yes";
+  services.getty.autologinUser = lib.mkOverride 999 "root";
+
+  systemd.services.zinc = let
+    zinc = pkgs.callPackage ../01-package/package.nix {};
+  in {
+    enable = true;
+    description = "Zeus in Numerous Colours";
+    after = [ "network.target" ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      ExecStart = "${zinc}/bin/zinc";
+      DynamicUser = true;
+    };
+  };
+
+  networking.firewall.allowedTCPPorts = [ 80 ];
+
+  services.nginx = {
+    enable = true;
+    recommendedProxySettings = true;
+    virtualHosts = {
+      "localhost" = {
+        locations."/" = {
+          proxyPass = "http://localhost:8081";
+        };
+      };
+    };
+  };
+
+}
+            </code></pre>
+        </section>
+      </div>
+    </div>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>
